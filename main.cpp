@@ -139,10 +139,18 @@ void loadMapfromAria(Mat &map, double &minX, double &minY, double &maxX, double 
   }
 }
 
-bool freeSpace(Mat map, double x, double y, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
+bool freeSpace(Mat map, double x1, double y1, double x2, double y2, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
   const int obstaclePoint = 255;
-  //Mat uses y,x
-  if (map.at<uchar>( int ((y-minY)/resolution), int ((x-minX)/resolution) ) == obstaclePoint ) return false;
+  int x1i=(x1-minX)/resolution;
+  int y1i=(y1-minY)/resolution;
+  int x2i=(x2-minX)/resolution;
+  int y2i=(y2-minY)/resolution;
+  if (x1i>x2i) {int tmp=x2i;x2i=x1i;x1i=tmp;}
+  if (y1i>y2i) {int tmp=y2i;y2i=y1i;y1i=tmp;}
+  for (int x=x1i; x<=x2i; x++)
+    for (int y=y1i; y<=y2i; y++)
+      //Mat uses y,x
+      if (map.at<uchar>( y, x ) == obstaclePoint ) return false;
   return true;
 }
 
@@ -167,10 +175,21 @@ void drawPoses(Mat map, poseArrayType poses, boostPolygonType visibilityCone, do
     transform(transf, transf2, translate);
     //scale_transformer<boostPointType, boostPointType>  scale(40.0,40.0);
     cvPolygonType cvPolygon = boostPolygon2cvPoligon(transf2);
-    //drawPolygon(mapBackup, cvPolygon, minX, minY, maxX, maxY, resolution, Scalar(50,50,50), 2, true);
+    drawPolygon(mapBackup, cvPolygon, minX, minY, maxX, maxY, resolution, Scalar(50,50,50), 2, true);
   }
   imshow("Poses", mapBackup);
   waitKey(0);
+}
+
+void filterCloseToObstacles(Mat obstacles, poseArrayType &poses, double minDistance, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
+  poseArrayType posesBackup=poses;
+  poses.clear();
+  for (int i=0; i<posesBackup.size(); i++) {
+    if ( freeSpace(obstacles, posesBackup[i].x-minDistance, posesBackup[i].y-minDistance, posesBackup[i].x+minDistance, posesBackup[i].y+minDistance, minX, minY, maxX, maxY, resolution) ) {
+      poses.push_back(posesBackup[i]);
+    }
+  }
+  cout << "Deleted " << posesBackup.size()-poses.size() << " poses close to obstacles" << endl;
 }
 
 
@@ -181,7 +200,6 @@ void filterSimilarPoses(poseArrayType &poses, double minDistance, double minAngl
   for (int i=0; i<posesBackup.size(); i++) {
     bool isClose=false;
     for (int j=0; j<poses.size(); j++) {
-      //if ( abs(posesBackup[i].x-poses[j].x) < minDistance && abs(posesBackup[i].y-poses[j].y) < minDistance && abs(posesBackup[i].theta-poses[j].theta && posesBackup[i].x!=poses[j].x) && posesBackup[i].y!=poses[j].y ) {
       if ( abs(posesBackup[i].x-poses[j].x) < minDistance && abs(posesBackup[i].y-poses[j].y) < minDistance && abs(posesBackup[i].theta-poses[j].theta) < minAngle ) {
 	isClose=true;
 	break;
@@ -189,7 +207,6 @@ void filterSimilarPoses(poseArrayType &poses, double minDistance, double minAngl
     }
     if (!isClose) poses.push_back(posesBackup[i]);
   }
-  //cout << "Original poses: " << posesBackup.size()-poses.size() << " similar poses" << endl;
   cout << "Deleted " << posesBackup.size()-poses.size() << " similar poses" << endl;
 }
 
@@ -243,7 +260,7 @@ void generatePoses(Mat map, poseArrayType &poses, int maxPoses, boostPolygonType
     pose.y=(maxY-minY)*( double (rand())/RAND_MAX) + minY;
     pose.theta=360*( double (rand())/RAND_MAX);
     
-    if ( within(make<boostPointType>(pose.x, pose.y), space) && freeSpace(map, pose.x, pose.y, minX, minY, maxX, maxY, resolution) ) {
+    if ( within(make<boostPointType>(pose.x, pose.y), space) && freeSpace(map, pose.x, pose.y, pose.x, pose.y, minX, minY, maxX, maxY, resolution) ) {
       poses.push_back(pose);
       i++;
     }
@@ -332,13 +349,21 @@ int main()
   flatSurfacesinDinning = selectFlatSurfaces(room[0], flatSurfaces);
   
   poseArrayType poses;
-  int numPoses=1000;
+  
+  int numPoses=2000;
   generatePoses(mapFree, poses, numPoses, visibilityCone, room[0], minX, minY, maxX, maxY, resolution);
-  int maxPoses=20;
+  
+  int maxPoses=100;
   evaluatePoses(poses, flatSurfacesinDinning, visibilityCone, maxPoses);
-  double minDistance=1000;  //Distance to be considered close in milimeters
-  double minAngle=30;   //Angle to be considered close in degrees
-  filterSimilarPoses(poses, minDistance, minAngle);
+  
+  double obstacleDistance=200;  //Distance to be considered close to obstacles in milimeters
+  filterCloseToObstacles(mapFree, poses, obstacleDistance, minX, minY, maxX, maxY, resolution);
+  
+  double closeDistance=500;  //Distance to be considered close to other poses in milimeters
+  double closeAngle=30;   //Angle to be considered close to other poses in degrees
+  filterSimilarPoses(poses, closeDistance, closeAngle);
+  
+  cout << poses.size() << " poses to be used" << endl;
   drawPoses(mapFree, poses, visibilityCone, minX, minY, maxX, maxY, resolution);
   
   return 0;
