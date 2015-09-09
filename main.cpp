@@ -48,7 +48,7 @@ int main()
   
   
   //For making repetitive experiments
-  ofstream fileStream("experimen-"+roomName+".txt");
+  ofstream fileStream("experiment-"+roomName+".txt");
   fileStream << "Room,";
   fileStream << "Overlap Threshold,";
   fileStream << "Repetition,";
@@ -154,8 +154,8 @@ int main()
   fileStream << poses.size() << ",";
 
   double totalFlatArea=0;
-  for (int i=0; i<flatSurfaces.size(); i++) {
-    totalFlatArea += area(flatSurfaces[i]);
+  for (int i=0; i<flatSurfacesinRoom.size(); i++) {
+    totalFlatArea += area(flatSurfacesinRoom[i]);
   }  
   fileStream << totalFlatArea << ",";
   fileStream << coverage << ",";
