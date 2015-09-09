@@ -10,4 +10,6 @@ add_executable(polygonintersection main.cpp)
 
 target_link_libraries( polygonintersection ${OpenCV_LIBS} )
 
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
 #install(TARGETS polygonintersection RUNTIME DESTINATION bin)

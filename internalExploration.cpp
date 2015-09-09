@@ -1,17 +1,18 @@
 #include <iostream>
 #include <deque>  //Double ended queues
+#include <algorithm>    // std::copy_if, std::distance
+#include <fstream>	//files
 
 #include <boost/geometry.hpp>
 #include <boost/geometry/geometries/point_xy.hpp>
 #include <boost/geometry/geometries/polygon.hpp>
+#include <boost/geometry/multi/geometries/multi_polygon.hpp>
 #include <boost/geometry/io/wkt/wkt.hpp>
 #include <boost/geometry/strategies/transform.hpp>
 
 #include <boost/foreach.hpp>
 
 #include "opencv2/opencv.hpp"
-
-#include <fstream>	//files
 
 
 #define PI 3.14159265
@@ -23,16 +24,22 @@ using namespace boost::geometry::strategy::transform;
 
 
 typedef model::d2::point_xy<double> boostPointType;
-typedef model::polygon<boostPointType> boostPolygonType;   //A polygon with holes defined for polygons
+typedef model::polygon<boostPointType> boostPolygonType;   //A polygon with holes defined for polygons in boost
+typedef model::multi_polygon<boostPolygonType> boostMultiPolygonType;
+//TODO Many methods have not used multi-polygon for not known it before. For easy code, it is needed a change for deque
 
 typedef Point cvPointType;
-typedef vector < vector< cvPointType > > cvPolygonType;   //A polygon with holes defined for polygons
+typedef vector < vector< cvPointType > > cvPolygonType;   //A polygon with holes defined for polygons in OpenCV
+
+
 
 struct poseType {
   double x;
   double y;
   double theta;
   double flatArea;
+  int flatSurfaceSeen;
+  double overlapedArea;
 };
 
 typedef vector<poseType> poseArrayType;
@@ -154,7 +161,7 @@ bool freeSpace(Mat map, double x1, double y1, double x2, double y2, double minX=
   return true;
 }
 
-void drawPoses(Mat map, poseArrayType poses, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
+void drawPoses(Mat map, poseArrayType poses, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1, string windowsName="Poses") {
   Mat mapBackup=map.clone();
   for (int i=0; i<poses.size(); i++) {
     double x=poses[i].x;
@@ -174,17 +181,17 @@ void drawPoses(Mat map, poseArrayType poses, boostPolygonType visibilityCone, do
     transform(transf, transf2, translate);
     //scale_transformer<boostPointType, boostPointType>  scale(40.0,40.0);
     cvPolygonType cvPolygon = boostPolygon2cvPoligon(transf2);
-    drawPolygon(mapBackup, cvPolygon, minX, minY, maxX, maxY, resolution, Scalar(50,50,50), 2, true);
+    //drawPolygon(mapBackup, cvPolygon, minX, minY, maxX, maxY, resolution, Scalar(50,50,50), 2, true);
   }
   
   Mat mapFlip;
   flip(mapBackup,mapFlip,0);
-  imshow("Poses", mapFlip);
+  imshow(windowsName, mapFlip);
   waitKey(0);
-  destroyWindow("Poses");
+  destroyWindow(windowsName);
 }
 
-void drawOnePose(Mat map, double x, double y, double theta, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
+void drawOnePose(Mat map, double x, double y, double theta, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1, string windowsName="Poses") {
   Mat mapBackup=map.clone();
   
   //Draw pose with arrow
@@ -204,23 +211,34 @@ void drawOnePose(Mat map, double x, double y, double theta, boostPolygonType vis
   
   Mat mapFlip;
   flip(mapBackup,mapFlip,0);
-  imshow("Poses", mapFlip);
+  imshow(windowsName, mapFlip);
   waitKey(0);
-  destroyWindow("Poses");
+  destroyWindow(windowsName);
 }
 
 
-void drawPath(Mat map, poseArrayType poses, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
+void drawPath(Mat map, poseArrayType poses, boostPolygonType visibilityCone, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1, string windowsName="Poses") {
   Mat mapBackup=map.clone();
+  
+  //Draw the first pose
+  int orientationLengthFirst=max( abs(maxX-minX), abs(maxY-minY) )/50;
+  drawPoint(mapBackup, poses[0].x, poses[0].y, minX, minY, maxX, maxY, resolution, Scalar(200,200,200), 6);
+  drawLine(mapBackup, poses[0].x, poses[0].y, poses[0].x+orientationLengthFirst*sin(poses[0].theta*PI/180), poses[0].y+orientationLengthFirst*cos(poses[0].theta*PI/180), minX, minY, maxX, maxY, resolution, Scalar(200,200,200), 2);
+  
   for (int i=1; i<poses.size(); i++) {
+    //Draw path
     drawLine(mapBackup, poses[i-1].x, poses[i-1].y, poses[i].x, poses[i].y, minX, minY, maxX, maxY, resolution, Scalar(200,200,200), 1);
+    //Draw pose
+    int orientationLength=max( abs(maxX-minX), abs(maxY-minY) )/50;
+    drawPoint(mapBackup, poses[i].x, poses[i].y, minX, minY, maxX, maxY, resolution, Scalar(200,200,200), 6);
+    drawLine(mapBackup, poses[i].x, poses[i].y, poses[i].x+orientationLength*sin(poses[i].theta*PI/180), poses[i].y+orientationLength*cos(poses[i].theta*PI/180), minX, minY, maxX, maxY, resolution, Scalar(200,200,200), 2);
   }
   
   Mat mapFlip;
   flip(mapBackup,mapFlip,0);
-  imshow("Path", mapFlip);
+  imshow(windowsName, mapFlip);
   waitKey(0);
-  destroyWindow("Path");
+  destroyWindow(windowsName);
 }
 
 
@@ -230,6 +248,7 @@ double distanceToPoint(double x1, double y1, double x2, double y2) {
 
 
 void selectPath(poseArrayType &poses, double xInit, double yInit) {
+  //Order poses according the closest pose
   poseArrayType posesBackup=poses;
   poses.clear();
   int numComparatives=posesBackup.size();
@@ -250,6 +269,41 @@ void selectPath(poseArrayType &poses, double xInit, double yInit) {
   }
 }
 
+
+void selectPath2(vector <boostPolygonType> flatSurfacesinRoom, poseArrayType &poses, double xInit, double yInit) { 
+  //Order poses according the area of the flat surface
+  vector <double> areas;
+  vector <int> indexes;
+  for (int i=0; i<flatSurfacesinRoom.size(); i++) {
+    areas.push_back( area( flatSurfacesinRoom[i] ) );
+    indexes.push_back(i);
+  }
+  sort( indexes.begin(), indexes.end(), [&areas](int i1, int i2) {return areas[i1] > areas[i2];} ); //Using lambdas (C++11) for sorting with indexes
+  //And make a path with all the poses of each flat surface seen
+  poseArrayType posesBackup=poses;
+  poses.clear();
+  for (int i=0; i<flatSurfacesinRoom.size(); i++) {
+    poseArrayType posesbySurface;
+    for (int j=0; j< posesBackup.size(); j++) {
+      if (posesBackup[j].flatSurfaceSeen == indexes[i]) {
+	posesbySurface.push_back(posesBackup[j]);
+      }
+    }
+    //Intentos por usar librerias de copia condicional
+    //poseArrayType posesbySurface ( posesBackup.size() );
+    //std::copy_if (posesBackup.begin(), posesBackup.end(), back_inserter(posesbySurface), [](const poseType& pose){return (pose.flatSurfaceSeen==i);} ); //Copy only the analized flat surface
+    
+    //poseArrayType::iterator it = std::copy_if (posesBackup.begin(), posesBackup.end(), posesbySurface.begin(), [](poseType pose){return (pose.flatSurfaceSeen==i);} ); //Copy only the analized flat surface
+    //posesbySurface.resize(std::distance(posesbySurface.begin(),it));  // shrink container to new size
+    if (posesbySurface.size() > 0 ) {
+      selectPath(posesbySurface, xInit, yInit); //Find shortes path with the path method
+      xInit=posesbySurface.back().x; //The last point of the last path will be the first point of the new one
+      yInit=posesbySurface.back().y;
+      poses.insert( poses.end(), posesbySurface.begin(), posesbySurface.end() ); //Put togheter all the paths by flat surface
+    }
+  }
+}
+
 void filterCloseToObstacles(Mat obstacles, poseArrayType &poses, double minDistance, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
   poseArrayType posesBackup=poses;
   poses.clear();
@@ -258,10 +312,19 @@ void filterCloseToObstacles(Mat obstacles, poseArrayType &poses, double minDista
       poses.push_back(posesBackup[i]);
     }
   }
-  cout << "Deleted " << posesBackup.size()-poses.size() << " poses close to obstacles" << endl;
+}
+
+double angleDiff(double a1, double a2) {
+  double angle = fmod ( abs(a2- a1) , 360 );
+  if (angle > 180) 
+    return 360 - angle;
+  else
+    return angle;
 }
 
 
+//TODO TODO Podría cambiarse este metodo para que el filtro funcionara con el porcentaje de traslape. Si tienen cierto porcentaje entonces verificamos el angulo entre las poses. Si este angulo es menor que un umbral (porcentaje de 360 grados que a lo mejor puede ser el porcentaje del angulo que forma el cono de visibilidad) entonces la pose es similar. Habria que analizar si todavia se requiere el filtro de poses traslapadas. Ya lo pensé que si se requiere el otro filtro. Si no se tuviera y pongo un porcentaje de angulo muy grande se tendran poses que miran al mismo lugar y con el mismo angulo, lo que nunca se requiere.
+//TODO Si reduzco el traslape elimino las poses similares. Pero si reduzco las similares no reduzco el traslape.
 void filterSimilarPoses(poseArrayType &poses, double minDistance, double minAngle) {
   //This method supposes poses sorted by flatArea desc
   poseArrayType posesBackup=poses;
@@ -269,20 +332,58 @@ void filterSimilarPoses(poseArrayType &poses, double minDistance, double minAngl
   for (int i=0; i<posesBackup.size(); i++) {
     bool isClose=false;
     for (int j=0; j<poses.size(); j++) {
-      if ( abs(posesBackup[i].x-poses[j].x) < minDistance && abs(posesBackup[i].y-poses[j].y) < minDistance && abs(posesBackup[i].theta-poses[j].theta) < minAngle ) {
+      //if ( abs(posesBackup[i].x-poses[j].x) < minDistance && abs(posesBackup[i].y-poses[j].y) < minDistance && abs(posesBackup[i].theta-poses[j].theta) < minAngle ) {
+      if ( sqrt( pow(posesBackup[i].x-poses[j].x,2) + pow(posesBackup[i].y-poses[j].y,2) ) < minDistance && angleDiff(posesBackup[i].theta,poses[j].theta) < minAngle ) {
 	isClose=true;
 	break;
       }
     }
     if (!isClose) poses.push_back(posesBackup[i]);
   }
-  cout << "Deleted " << posesBackup.size()-poses.size() << " similar poses" << endl;
 }
+
+
 
 bool wayToSortPoses(poseType i, poseType j) {
   return i.flatArea > j.flatArea;
 }
 
+bool wayToSortPosesByOverlapedArea(poseType i, poseType j) {
+  return i.overlapedArea < j.overlapedArea;
+}
+
+
+void filterOverlapedViews(poseArrayType &poses, boostPolygonType visibilityCone, double PercentageAreaThreshold) {
+  //This method supposes poses sorted by SeenArea desc
+  sort(poses.begin(), poses.end(), wayToSortPoses);
+  double visibilityConeArea = area(visibilityCone);
+  poseArrayType posesNoOverlaped;
+  while (poses.size()>0) {
+    posesNoOverlaped.push_back(poses[0]);
+    translate_transformer<boostPointType, boostPointType> translate(posesNoOverlaped.back().x, posesNoOverlaped.back().y);
+    rotate_transformer<boostPointType, boostPointType, degree> rotate(posesNoOverlaped.back().theta);
+    boostPolygonType transf, transf2;
+    transform(visibilityCone, transf, rotate);
+    transform(transf, transf2, translate);
+    poseArrayType posesBackup;
+    for (int i=1; i<poses.size(); i++) { //The first pose is already saved
+      boostMultiPolygonType poseVisibilityIntersection;  //The intersection could be more than one polygon
+      translate_transformer<boostPointType, boostPointType> translate2(poses[i].x, poses[i].y);
+      rotate_transformer<boostPointType, boostPointType, degree> rotate2(poses[i].theta);
+      boostPolygonType transf3, transf4;
+      transform(visibilityCone, transf3, rotate2);
+      transform(transf3, transf4, translate2);
+      intersection(transf2, transf4, poseVisibilityIntersection);
+      if ( area(poseVisibilityIntersection)/visibilityConeArea < PercentageAreaThreshold ) {
+	posesBackup.push_back(poses[i]);
+      }
+    }
+    poses.clear();
+    poses=posesBackup;
+  }
+  poses.clear();
+  poses=posesNoOverlaped;
+}
 
 void evaluatePoses(poseArrayType &poses, vector <boostPolygonType> flatSurfaces, boostPolygonType visibilityCone, int maxPoses) {
   poseArrayType posesBackup=poses;
@@ -294,16 +395,25 @@ void evaluatePoses(poseArrayType &poses, vector <boostPolygonType> flatSurfaces,
     boostPolygonType transf, transf2;
     transform(visibilityCone, transf, rotate);
     transform(transf, transf2, translate);
+    double maxSurfaceArea=0;
+    int indexMaxSurfaceArea=0;
     double totalIntersectionArea=0;
     for (int j=0; j<flatSurfaces.size(); j++) {
       deque<boostPolygonType> flatVisibilityIntersection;  //The intersection could be more than one polygon
       intersection(transf2, flatSurfaces[j], flatVisibilityIntersection);
+      double partialIntersectionArea = 0;
       BOOST_FOREACH(boostPolygonType const& polygon, flatVisibilityIntersection) { //Each polygon resulting for intersection
-	totalIntersectionArea += area(polygon);
+	partialIntersectionArea += area(polygon);
       }
+      if (partialIntersectionArea > maxSurfaceArea) {
+	maxSurfaceArea = partialIntersectionArea;
+	indexMaxSurfaceArea = j;
+      }
+      totalIntersectionArea += partialIntersectionArea;
     }
     if (totalIntersectionArea>0) {
       posesBackup[i].flatArea = totalIntersectionArea;
+      posesBackup[i].flatSurfaceSeen = indexMaxSurfaceArea; //If poses by Surface are created this should be done after calling evaluatePoses because only one surface by room is sent.
       poses.push_back(posesBackup[i]);
       numValidPoses++;
     }
@@ -314,12 +424,14 @@ void evaluatePoses(poseArrayType &poses, vector <boostPolygonType> flatSurfaces,
   sort(poses.begin(), poses.end(), wayToSortPoses);
   for (int i=0; i<poses.size(); i++) {
     //cout << "Pose X: " << poses[i].x << "  Y: " << poses[i].y << "  Area:" << poses[i].flatArea << endl;
+    //TODO TODO TODO No debería de haber un máximo y este procedimiento debe llamarse filterNoSurfaceSeen
     if (i<maxPoses) {   //Only get the first ones maxPoses
       posesBackup.push_back(poses[i]);
     }
   }
   poses=posesBackup;
 }
+  
   
 
 void generatePoses(Mat map, poseArrayType &poses, int maxPoses, boostPolygonType visibilityCone, boostPolygonType space, double minX=0, double minY=0, double maxX=0, double maxY=0, double resolution=1) {
@@ -385,4 +497,76 @@ void loadPolygons(vector <boostPolygonType> &polygons, string fileName) {
   else {
     cout << "Error: No data file found." << endl;
   }
+}
+
+
+void measurePosesQuality(vector <boostPolygonType> flatSurfaces, poseArrayType poses, boostPolygonType visibilityCone, double &totalCoverageArea, double &totalOverlapedArea) {
+  totalOverlapedArea = 0;
+  boostMultiPolygonType coveragePolygon;
+  for (int i=0; i<poses.size(); i++) {
+    translate_transformer<boostPointType, boostPointType> translate(poses[i].x, poses[i].y);
+    rotate_transformer<boostPointType, boostPointType, degree> rotate(poses[i].theta);
+    boostPolygonType transf, transf2;
+    transform(visibilityCone, transf, rotate);
+    transform(transf, transf2, translate);
+    
+    for (int j=0; j<flatSurfaces.size(); j++) {
+      boostMultiPolygonType flatVisibilityIntersection;  //The intersection could be more than one polygon
+      intersection(transf2, flatSurfaces[j], flatVisibilityIntersection);
+      
+      boostMultiPolygonType overlapedPosePolygon;
+      intersection(flatVisibilityIntersection, coveragePolygon, overlapedPosePolygon);
+      totalOverlapedArea += area(overlapedPosePolygon);
+      
+      BOOST_FOREACH(boostPolygonType const& polygon, flatVisibilityIntersection) { //Each polygon resulting for intersection
+	boostMultiPolygonType tmpCoveragePolygon;
+	union_(coveragePolygon,polygon,tmpCoveragePolygon);
+	coveragePolygon = tmpCoveragePolygon;
+      }
+    }
+  }
+  
+  double totalFlatArea=0;
+  for (int i=0; i<flatSurfaces.size(); i++) {
+    totalFlatArea += area(flatSurfaces[i]);
+  }
+  totalCoverageArea=area(coveragePolygon);
+  cout << "Visibility cone area: " << area(visibilityCone) << endl;
+  cout << "Flat area: " << totalFlatArea << endl;
+  cout << "Coverage area: " << totalCoverageArea << endl;
+  cout << "Coverage percentage: " << 100*totalCoverageArea/totalFlatArea << endl;
+  cout << "Overlaped area: " << totalOverlapedArea << endl;
+  cout << "Overlaped percentage: " << 100*totalOverlapedArea/totalFlatArea << endl;
+}
+
+
+
+//TODO Measure the ideal length path (considering no obstacles nor walls in the map). The pose probability of seeing the object is the percentage of flat surface seen by the pose weighted by the probability of the flat surface (the percentage of all areas in the room. It considers that the object recognizer never fails.
+double measurePathQuality(vector <boostPolygonType> flatSurfaces, poseArrayType poses, double xInit, double yInit, boostPolygonType visibilityCone) {
+  double traveledExpectedDistance = 0;
+
+  double totalFlatArea=0;
+  for (int i=0; i<flatSurfaces.size(); i++) {
+    totalFlatArea += area(flatSurfaces[i]);
+  }
+  
+  for (int i=0; i<poses.size(); i++) {
+    translate_transformer<boostPointType, boostPointType> translate(poses[i].x, poses[i].y);
+    rotate_transformer<boostPointType, boostPointType, degree> rotate(poses[i].theta);
+    boostPolygonType transf, transf2;
+    transform(visibilityCone, transf, rotate);
+    transform(transf, transf2, translate);
+
+    double totalIntersectionArea=0;
+    for (int j=0; j<flatSurfaces.size(); j++) {
+      boostMultiPolygonType flatVisibilityIntersection;  //The intersection could be more than one polygon
+      intersection(transf2, flatSurfaces[j], flatVisibilityIntersection);
+      totalIntersectionArea += area(flatVisibilityIntersection);
+    }
+    traveledExpectedDistance += distanceToPoint(xInit, yInit, poses[i].x,poses[i].y) * (totalIntersectionArea/totalFlatArea);
+    xInit = poses[i].x;
+    yInit = poses[i].y;
+  }
+  cout << "Traveled expected distance: " << traveledExpectedDistance << endl;
+  return traveledExpectedDistance;
 }
